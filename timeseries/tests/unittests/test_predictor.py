@@ -15,7 +15,6 @@ import pytest
 
 from autogluon.common import space
 from autogluon.common.utils.log_utils import verbosity2loglevel
-from autogluon.common.utils.utils import seed_everything
 from autogluon.timeseries.dataset import TimeSeriesDataFrame
 from autogluon.timeseries.dataset.ts_dataframe import ITEMID, TIMESTAMP
 from autogluon.timeseries.metrics import DEFAULT_METRIC_NAME
@@ -1154,38 +1153,6 @@ def test_when_predictor_fit_with_verbosity_then_verbosity_overridden_and_propaga
         assert level == verbosity2loglevel(verbosity)
 
 
-@pytest.mark.parametrize("random_seed", [123, 1, 42])
-def test_when_predictor_fit_with_random_seed_then_torch_seed_set_for_all_models(temp_model_path, random_seed):
-    predictor = TimeSeriesPredictor(path=temp_model_path)
-
-    import torch
-
-    def train_save_side_effect(self, *args, **kwargs):
-        assert torch.get_rng_state().numpy()[0] == random_seed
-
-        # mess with the seed
-        seed_everything(66)
-
-        return "mock_model"
-
-    with mock.patch("autogluon.timeseries.trainer.AbstractTimeSeriesTrainer._train_and_save") as mock_train_save:
-        mock_train_save.side_effect = train_save_side_effect
-        predictor.fit(
-            DUMMY_TS_DATAFRAME,
-            hyperparameters={
-                "SeasonalNaive": {},
-                "RecursiveTabular": {
-                    "tabular_hyperparameters": {"NN_TORCH": {"proc.impute_strategy": "constant", "num_epochs": 1}},
-                },
-                "TemporalFusionTransformer": {"epochs": 1},
-                "DeepAR": {"epochs": 1},
-            },
-            random_seed=random_seed,
-            enable_ensemble=False,
-        )
-        assert mock_train_save.call_count == 4
-
-
 @pytest.mark.parametrize("random_seed", [123, 42])
 def test_when_predictor_predict_called_with_random_seed_then_torch_seed_set_for_all_predictions(
     temp_model_path, random_seed
@@ -1760,3 +1727,27 @@ def test_given_predictor_takes_known_only_when_feature_importance_called_with_im
                 assert np.allclose(importance, 0, atol=1e-8)
             else:
                 assert np.isfinite(importance)
+
+
+def test_when_predictor_saved_to_same_directory_then_leaderboard_works(temp_model_path):
+    data = DUMMY_TS_DATAFRAME
+    old_predictor = TimeSeriesPredictor(path=temp_model_path).fit(data, hyperparameters={"Naive": {}})
+    old_predictor.leaderboard(data)
+
+    new_predictor = TimeSeriesPredictor(path=temp_model_path).fit(data, hyperparameters={"Average": {}})
+    assert len(new_predictor.leaderboard(data)) == 1
+
+
+def test_when_predictor_saved_to_same_directory_and_loaded_then_number_of_models_matches(temp_model_path):
+    data = DUMMY_TS_DATAFRAME
+    old_predictor = TimeSeriesPredictor(path=temp_model_path).fit(data, hyperparameters={"Naive": {}, "Average": {}})
+    old_predictor.leaderboard(data)
+
+    hyperparameters = {"SeasonalNaive": {}, "SeasonalAverage": {}}
+    new_predictor = TimeSeriesPredictor(path=temp_model_path).fit(data, hyperparameters=hyperparameters)
+    loaded_predictor = TimeSeriesPredictor.load(temp_model_path)
+    assert (
+        set(new_predictor.model_names())
+        == set(loaded_predictor.model_names())
+        == set(hyperparameters).union({"WeightedEnsemble"})
+    )

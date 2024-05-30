@@ -146,7 +146,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
     """
 
     predictor_file_name = "predictor.pkl"
-    _predictor_version_file_name = "__version__"
+    _predictor_version_file_name = "version.txt"
     _predictor_log_file_name = "predictor_log.txt"
 
     def __init__(
@@ -190,7 +190,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
             raise ValueError(f"Target column {self.target} cannot be one of the known covariates.")
         self.known_covariates_names = list(known_covariates_names)
 
-        self.prediction_length = prediction_length
+        self.prediction_length = int(prediction_length)
         # For each validation fold, all time series in training set must have length >= _min_train_length
         self._min_train_length = max(self.prediction_length + 1, 5)
         self.freq = freq
@@ -293,7 +293,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
             Preprocessed data in TimeSeriesDataFrame format.
         """
         df = self._to_data_frame(data, name=name)
-        df = df.astype({self.target: "float32"})
+        df = df.astype({self.target: "float64"})
         # MultiIndex.is_monotonic_increasing checks if index is sorted by ["item_id", "timestamp"]
         if not df.index.is_monotonic_increasing:
             df = df.sort_index()
@@ -499,7 +499,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
               with reasonable training time.
             - ``"high_quality"``: All ML models available in AutoGluon + additional statistical models (``NPTS``, ``AutoETS``, ``AutoARIMA``, ``CrostonSBA``,
               ``DynamicOptimizedTheta``). Much more accurate than ``medium_quality``, but takes longer to train.
-            - ``"best_quality"``: Same models as in ``"high_quality"`, but performs validation with multiple backtests. Usually better than ``high_quality``, but takes even longer to train.
+            - ``"best_quality"``: Same models as in ``"high_quality"``, but performs validation with multiple backtests. Usually better than ``high_quality``, but takes even longer to train.
 
             Available presets with the `Chronos <https://github.com/amazon-science/chronos-forecasting>`_ model:
 
@@ -507,8 +507,10 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
               See the documentation for ``ChronosModel`` or see `Hugging Face <https://huggingface.co/collections/amazon/chronos-models-65f1791d630a8d57cb718444>`_ for more information.
               Note that a GPU is required for model sizes ``small``, ``base`` and ``large``.
             - ``"chronos"``: alias for ``"chronos_small"``.
-            - ``"chronos_ensemble"``: builds an ensemble of the models specified in ``"high_quality"`` and ``"chronos_small"``.
-            - ``"chronos_large_ensemble"``: builds an ensemble of the models specified in ``"high_quality"`` and ``"chronos_large"``.
+            - ``"chronos_ensemble"``: builds an ensemble of seasonal naive, tree-based and deep learning models with fast inference
+              and ``"chronos_small"``.
+            - ``"chronos_large_ensemble"``: builds an ensemble of seasonal naive, tree-based and deep learning models
+              with fast inference and ``"chronos_large"``.
 
             Details for these presets can be found in ``autogluon/timeseries/configs/presets_configs.py``. If not
             provided, user-provided values for ``hyperparameters`` and ``hyperparameter_tune_kwargs`` will be used
@@ -578,7 +580,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
 
             * "num_trials": How many HPO trials to run
             * "scheduler": Which scheduler to use. Valid values:
-                * "local": Local shceduler that schedules trials FIFO
+                * "local": Local scheduler that schedules trials FIFO
             * "searcher": Which searching algorithm to use. Valid values:
                 * "local_random": Uses the "random" searcher
                 * "random": Perform random search
@@ -1039,8 +1041,27 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
 
     @classmethod
     def _load_version_file(cls, path: str) -> str:
+        """
+        Loads the version file that is part of the saved predictor artifact.
+
+        Parameters
+        ----------
+        path: str
+            The path that would be used to load the predictor via `predictor.load(path)`
+
+        Returns
+        -------
+        The version of AutoGluon used to fit the predictor, as a string.
+
+        """
         version_file_path = os.path.join(path, cls._predictor_version_file_name)
-        version = load_str.load(path=version_file_path)
+        try:
+            version = load_str.load(path=version_file_path)
+        except:
+            # Loads the old version file used in `autogluon.timeseries<=1.1.0`, named `__version__`.
+            # This file name was changed because Kaggle does not allow uploading files named `__version__`.
+            version_file_path = os.path.join(path, "__version__")
+            version = load_str.load(path=version_file_path)
         return version
 
     @classmethod
@@ -1075,7 +1096,7 @@ class TimeSeriesPredictor(TimeSeriesPredictorDeprecatedMixin):
         except:
             logger.warning(
                 f'WARNING: Could not find version file at "{os.path.join(path, cls._predictor_version_file_name)}".\n'
-                f"This means that the predictor was fit in a version `<=0.7.0`."
+                f"This means that the predictor was fit in an AutoGluon version `<=0.7.0`."
             )
             version_saved = "Unknown (Likely <=0.7.0)"
 
